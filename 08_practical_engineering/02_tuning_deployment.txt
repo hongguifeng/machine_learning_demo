@@ -1,0 +1,223 @@
+============================================================
+第八章 8.2：超参数调优与模型部署
+============================================================
+
+============================================================
+1. 超参数调优
+============================================================
+
+【超参数 vs 模型参数】
+  模型参数: 训练过程中学到的 (权重 w, 偏置 b)
+  超参数:   训练前人工设定的 (学习率, 层数, 正则化强度)
+
+【调优方法】
+
+1. 网格搜索 (Grid Search):
+   穷举所有超参数组合
+   + 保证找到搜索范围内最优
+   - 组合爆炸，太慢
+
+2. 随机搜索 (Random Search):
+   随机采样超参数组合
+   + 效率高，特别是某些参数不重要时
+   + 相同预算下通常比网格搜索好
+
+3. 贝叶斯优化 (Bayesian Optimization):
+   用高斯过程建模"超参数→性能"的关系
+   根据已有结果，智能选择下一个要尝试的组合
+   + 最高效
+   - 实现复杂 (用 optuna 库)
+
+4. 经验法则:
+   - 学习率: 从 0.001 开始
+   - batch_size: 32, 64, 128
+   - 神经网络层数: 从小到大试
+   - 正则化: L2=0.01~0.0001
+
+
+--- 网格搜索 (Grid Search) ---
+/home/gfhong/testcode/ai_tutorial/08_practical_engineering/02_tuning_deployment.py:252: DeprecationWarning: torch.ao.quantization is deprecated and will be removed in 2.10. 
+For migrations of users: 
+1. Eager mode quantization (torch.ao.quantization.quantize, torch.ao.quantization.quantize_dynamic), please migrate to use torchao eager mode quantize_ API instead 
+2. FX graph mode quantization (torch.ao.quantization.quantize_fx.prepare_fx,torch.ao.quantization.quantize_fx.convert_fx, please migrate to use torchao pt2e quantization API instead (prepare_pt2e, convert_pt2e) 
+3. pt2e quantization has been migrated to torchao (https://github.com/pytorch/ao/tree/main/torchao/quantization/pt2e) 
+see https://github.com/pytorch/ao/issues/2259 for more details
+  model_int8 = torch.quantization.quantize_dynamic(
+搜索空间: 36 = 36 种组合
+最优参数: {'max_depth': None, 'min_samples_split': 5, 'n_estimators': 100}
+最优CV分数: 0.8776
+测试集分数: 0.9000
+耗时: 15.8s
+
+--- 随机搜索 (Random Search) ---
+搜索次数: 20 (从无限空间中采样)
+最优参数: {'max_depth': 10, 'min_samples_leaf': 1, 'min_samples_split': 5, 'n_estimators': 99}
+最优CV分数: 0.8751
+测试集分数: 0.9000
+耗时: 3.6s
+
+对比: 随机搜索用更少的尝试达到了相近(甚至更好)的结果
+
+============================================================
+2. 模型保存与加载
+============================================================
+
+【为什么要保存模型？】
+  训练一个模型可能要几小时/天/周
+  不能每次用的时候都重新训练！
+
+【常见格式】
+  - pickle/joblib: sklearn 模型
+  - .pt/.pth: PyTorch 模型
+  - ONNX: 跨框架标准格式
+  - SavedModel: TensorFlow
+
+【PyTorch 模型保存最佳实践】
+  推荐保存 state_dict (只保存参数):
+    torch.save(model.state_dict(), 'model.pth')
+    
+  加载时需要先创建模型结构:
+    model = MyModel()
+    model.load_state_dict(torch.load('model.pth'))
+
+✓ sklearn 模型保存/加载: 预测结果一致
+模型文件大小: 8359 bytes
+✓ PyTorch 模型保存/加载: 输出一致
+
+============================================================
+3. 推理优化
+============================================================
+
+【推理优化技术】
+
+1. 量化 (Quantization):
+   FP32 → INT8: 模型大小减少4倍，速度提升2-4倍
+   精度损失通常可接受 (<1%)
+   
+   PyTorch:
+     model_int8 = torch.quantization.quantize_dynamic(
+         model, {nn.Linear}, dtype=torch.qint8)
+
+2. 知识蒸馏 (Knowledge Distillation):
+   大模型(Teacher) → 训练小模型(Student)
+   Student 学习 Teacher 的"软标签"(概率分布)
+   小模型获得接近大模型的性能
+
+3. 剪枝 (Pruning):
+   去除接近零的权重
+   结构化剪枝: 去除整个神经元/通道
+   非结构化剪枝: 去除单个权重
+
+4. ONNX 导出:
+   统一模型格式，部署到各种推理引擎
+   torch.onnx.export(model, dummy_input, "model.onnx")
+
+5. 批处理推理:
+   一次预测多个样本，充分利用 GPU 并行性
+
+
+--- 动态量化示例 ---
+FP32 模型大小: 8,157 bytes
+INT8 模型大小: 5,261 bytes
+压缩比: 1.6x
+平均输出差异: 0.003105 (非常小)
+✓ 量化显著减小模型大小，精度损失极小
+
+============================================================
+4. MLOps 核心概念
+============================================================
+
+【什么是 MLOps？】
+MLOps = Machine Learning + DevOps
+让机器学习模型可靠地部署和运维
+
+【ML 项目生命周期】
+  数据收集 → 数据处理 → 特征工程 → 模型训练 
+  → 模型评估 → 模型部署 → 监控 → 迭代
+
+【核心实践】
+
+1. 实验追踪 (Experiment Tracking):
+   记录每次实验的超参数、指标、代码版本
+   工具: MLflow, Weights & Biases (W&B), TensorBoard
+
+2. 数据版本控制:
+   数据和代码一样需要版本管理
+   工具: DVC (Data Version Control)
+
+3. 模型注册 (Model Registry):
+   管理模型的不同版本，标记哪个是生产版
+   工具: MLflow Model Registry
+
+4. CI/CD for ML:
+   代码变更 → 自动训练 → 自动评估 → 自动部署
+   包含数据验证和模型质量门控
+
+5. 模型监控 (Model Monitoring):
+   - 数据漂移 (Data Drift): 输入分布变了
+   - 概念漂移 (Concept Drift): 输入-输出关系变了
+   - 性能下降: 模型准确率在下降
+
+6. A/B 测试:
+   新旧模型同时上线，对比真实效果
+
+【模型部署方式】
+  - REST API: Flask/FastAPI 包装模型
+  - 批处理: 定时跑一批预测
+  - 嵌入式: 模型打包到移动端
+  - Serverless: AWS Lambda / Cloud Functions
+
+
+--- 模拟实验追踪 ---
+实验总数: 9
+最优配置: n_estimators=200, max_depth=None
+最优CV分数: 0.8600 ± 0.0090
+
+实验记录已保存 (生产环境用 MLflow/W&B)
+
+--- 模型 API 部署示例 (FastAPI) ---
+
+# model_api.py
+from fastapi import FastAPI
+import pickle
+import numpy as np
+
+app = FastAPI()
+
+# 加载模型
+with open('model.pkl', 'rb') as f:
+    model = pickle.load(f)
+
+@app.post("/predict")
+def predict(features: list[float]):
+    X = np.array(features).reshape(1, -1)
+    prediction = model.predict(X)[0]
+    probability = model.predict_proba(X)[0].tolist()
+    return {
+        "prediction": int(prediction),
+        "probability": probability
+    }
+
+# 运行: uvicorn model_api:app --host 0.0.0.0 --port 8000
+# 调用: curl -X POST "http://localhost:8000/predict" \
+#        -H "Content-Type: application/json" \
+#        -d '{"features": [1.0, 2.0, ...]}'
+
+✓ 以上是一个完整的模型部署 API 示例
+
+============================================================
+本节总结
+============================================================
+
+关键要点:
+1. 超参数调优: 随机搜索 > 网格搜索, 贝叶斯优化最优
+2. 模型保存: sklearn用pickle, PyTorch用state_dict
+3. 推理优化: 量化(4x压缩), 蒸馏, 剪枝, ONNX
+4. MLOps: 实验追踪 + 版本控制 + 监控 + CI/CD
+
+工程师必知:
+  - 训练完模型只是开始，部署和维护才是大头
+  - 模型会退化，需要持续监控和更新
+  - 用 Pipeline 确保训练和推理预处理一致
+  - 记录每个实验的完整配置（可复现性）
+

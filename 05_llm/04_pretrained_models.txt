@@ -1,0 +1,278 @@
+============================================================
+第五章 5.4：使用预训练模型 (Hugging Face)
+============================================================
+
+============================================================
+1. Hugging Face 生态介绍
+============================================================
+
+【Hugging Face 核心组件】
+
+1. transformers 库:
+   - 提供数千个预训练模型
+   - 统一的 API: AutoModel, AutoTokenizer
+   - 支持 PyTorch 和 TensorFlow
+
+2. datasets 库:
+   - 大量现成的数据集
+   - 高效的数据加载
+
+3. Model Hub (huggingface.co):
+   - 社区分享的模型
+   - 模型卡片、使用示例
+
+【常用模型家族】
+- BERT: 双向编码器，擅长理解任务
+- GPT-2/3: 单向解码器，擅长生成
+- T5: 编码器-解码器，万能模型
+- LLaMA: Meta 的开源大模型
+
+【使用方式】
+  from transformers import AutoTokenizer, AutoModel
+  
+  tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+  model = AutoModel.from_pretrained("bert-base-uncased")
+
+
+============================================================
+2. Tokenizer (分词器) 详解
+============================================================
+
+【为什么需要 Tokenizer？】
+模型只能处理数字，不能直接处理文字。
+Tokenizer 的任务: 文本 → 数字序列
+
+【分词策略的演变】
+1. 按词分词: "I love AI" → ["I", "love", "AI"]
+   问题: 词表太大，无法处理未见过的词
+
+2. 按字符分词: "love" → ["l", "o", "v", "e"]
+   问题: 序列太长，丢失词级信息
+
+3. 子词分词 (Subword): 当前主流！
+   "unhappiness" → ["un", "happiness"]
+   "playing" → ["play", "ing"]
+   
+   BPE (Byte Pair Encoding): GPT 使用
+   WordPiece: BERT 使用
+   SentencePiece: LLaMA/T5 使用
+
+
+--- 简单 BPE 演示 ---
+训练文本: 'low lower lowest new newer newest' (重复10次)
+初始词表:
+  'l o w </w>': 10
+  'l o w e r </w>': 10
+  'l o w e s t </w>': 10
+  'n e w </w>': 10
+  'n e w e r </w>': 10
+
+合并 #1: 'w' + 'e' → 'we'
+
+合并 #2: 'l' + 'o' → 'lo'
+
+合并 #3: 'n' + 'e' → 'ne'
+
+合并 #4: 'w' + '</w>' → 'w</w>'
+
+合并 #5: 'lo' + 'we' → 'lowe'
+
+最终词表示例:
+  'lo w</w>': 10
+  'lowe r</w>': 10
+  'lowe st</w>': 10
+  'ne w</w>': 10
+  'ne we r</w>': 10
+
+【关键理解】
+BPE 通过反复合并最频繁的相邻字符对来构建子词词表
+'low', 'lower', 'lowest' 共享前缀 'low'
+→ 模型可以利用子词之间的共享语义！
+
+============================================================
+3. 使用预训练模型 (代码示例)
+============================================================
+
+【注意】以下代码需要安装 transformers 库并下载模型
+如果网络环境允许，可以实际运行
+
+--- 文本分类 (情感分析) ---
+
+from transformers import pipeline
+
+# 最简单的方式: 使用 pipeline
+classifier = pipeline("sentiment-analysis")
+result = classifier("I love this tutorial! It's amazing.")
+print(result)
+# [{'label': 'POSITIVE', 'score': 0.9998}]
+
+--- 文本生成 ---
+
+from transformers import pipeline
+
+generator = pipeline("text-generation", model="gpt2")
+result = generator("Once upon a time", max_length=50)
+print(result[0]['generated_text'])
+
+--- 更细粒度的控制 ---
+
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
+model = AutoModelForCausalLM.from_pretrained("gpt2")
+
+# 编码
+input_ids = tokenizer.encode("Hello, how are", return_tensors="pt")
+
+# 生成
+output = model.generate(input_ids, max_length=20, temperature=0.7)
+
+# 解码
+text = tokenizer.decode(output[0])
+print(text)
+
+
+--- 用我们的 MiniGPT 模拟 Hugging Face 的使用流程 ---
+原文: 'the cat sat on the mat'
+编码: [3, 4, 5, 6, 3, 7]
+解码: 'the cat sat on the mat'
+✓ Tokenizer 正确
+
+============================================================
+4. 微调 (Fine-tuning)
+============================================================
+
+【什么是微调？】
+
+预训练模型已经学会了语言的通用知识。
+微调 = 在你的特定任务数据上继续训练，让模型适应你的需求。
+
+【微调的类型】
+
+1. 全量微调 (Full Fine-tuning):
+   更新所有参数
+   - 效果最好
+   - 但需要大量显存和计算
+
+2. 冻结部分层:
+   只更新最后几层
+   - 更快，显存更少
+   - 底层的通用知识保持不变
+
+3. LoRA (Low-Rank Adaptation):
+   只训练小的附加矩阵
+   - 参数效率极高
+   - 现在最流行的方法！
+   
+   原理: W_new = W_old + A × B
+   W_old: 冻结的原始权重 (d×d)
+   A: (d×r), B: (r×d), r << d
+   只训练 A 和 B，参数量从 d² 减少到 2dr
+
+4. Prompt Tuning:
+   只优化输入的 prompt 向量
+   - 模型完全冻结
+   - 参数量最少
+
+
+--- 微调演示 ---
+
+微调步骤:
+1. 加载预训练模型
+2. 冻结或部分冻结模型参数
+3. 添加任务特定的头（如分类头）
+4. 在任务数据上训练
+5. 评估
+
+代码示例 (Hugging Face):
+
+  from transformers import AutoModelForSequenceClassification, Trainer
+  
+  # 加载预训练模型 + 分类头
+  model = AutoModelForSequenceClassification.from_pretrained(
+      "bert-base-uncased", 
+      num_labels=2  # 二分类
+  )
+  
+  # 冻结底层（可选）
+  for param in model.bert.encoder.layer[:8].parameters():
+      param.requires_grad = False
+  
+  # 训练
+  trainer = Trainer(model=model, train_dataset=train_dataset, ...)
+  trainer.train()
+
+
+============================================================
+5. LoRA 简单实现
+============================================================
+--- LoRA 参数效率 ---
+原始层参数: 262,144 (512×512)
+LoRA 可训练参数: 8,192 (512×8 + 8×512)
+参数比例: 3.1%
+
+→ 只需训练 3.1% 的参数就能适应新任务！
+
+初始时 LoRA 输出与原始差异: 0.0000000000
+✓ B 初始化为 0，所以 LoRA 初始不改变模型行为
+
+============================================================
+6. 总结和下一步学习路线
+============================================================
+
+🎉 恭喜！你已经完成了从零开始的 AI 学习之旅！
+
+【回顾我们学到了什么】
+
+第1章 数学基础:
+  ✓ 线性代数 (向量、矩阵、特征值)
+  ✓ 微积分 (导数、梯度、反向传播)
+  ✓ 概率统计 (贝叶斯、分布、信息论)
+  ✓ 优化方法 (SGD、Adam)
+
+第2章 Python 工具:
+  ✓ NumPy (高效数值计算)
+  ✓ Pandas (数据处理)
+  ✓ Matplotlib (可视化)
+
+第3章 机器学习:
+  ✓ 线性回归 & 逻辑回归
+  ✓ 决策树 & 随机森林
+  ✓ 模型评估 (交叉验证、偏差-方差)
+
+第4章 深度学习:
+  ✓ 从零实现神经网络
+  ✓ PyTorch 框架
+  ✓ CNN (卷积神经网络)
+  ✓ RNN/LSTM (循环神经网络)
+
+第5章 大语言模型:
+  ✓ 词嵌入 (Word2Vec)
+  ✓ 注意力机制
+  ✓ Transformer 架构
+  ✓ 预训练模型和微调
+
+【下一步学习建议】
+
+1. 实践项目:
+   - 用 Hugging Face 做一个文本分类项目
+   - 用 PyTorch 训练一个小型 CNN 做图像分类
+   - 尝试微调一个小型语言模型
+
+2. 深入学习:
+   - 读 "Attention Is All You Need" 论文
+   - 学习 RLHF (人类反馈强化学习)
+   - 了解 RAG (检索增强生成)
+   - 学习 Agent 和 Tool Use
+
+3. 工程实践:
+   - 模型部署 (ONNX, TensorRT)
+   - 分布式训练
+   - 模型量化和加速
+
+4. 推荐资源:
+   - fast.ai 课程 (实践导向)
+   - Stanford CS229/CS231n/CS224n
+   - Andrej Karpathy 的 YouTube 频道
+   - Hugging Face 官方教程
+
